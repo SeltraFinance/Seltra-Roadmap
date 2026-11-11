@@ -1,461 +1,148 @@
-# Seltra Milestones
-
-SCF Build delivery plan for programmable limit-order execution on Stellar/Soroban.
-
-## Plan summary
-
-
-| Tranche                                                | Period                       | Delivery budget | Exit outcome                                                                                              |
-| ------------------------------------------------------ | ---------------------------- | --------------- | --------------------------------------------------------------------------------------------------------- |
-| 1. Settlement core, both venues, and threat model      | 2026-12-15 to 2027-01-29     | USD 31,200      | Frozen core contracts, two venue adapters, tested invariants, and externally reviewed threat model        |
-| 2. Public testnet, open keeper network, and yield mode | 2027-01-30 to 2027-03-01     | USD 32,400      | Public testnet application, independent keeper path, complete order pipeline, and frozen DeFindex adapter |
-| 3. Mainnet and checkpoint-by-checkpoint verification   | 2027-03-02 to 2027-04-13     | USD 30,400      | Hardened mainnet deployment, production application, and at least two independent keeper operators        |
-| **Total**                                              | **2026-12-15 to 2027-04-13** | **USD 94,000**  | **Mainnet launch and independently operable execution network**                                           |
-
-
-The tranche budgets above are delivery-cost allocations and reconcile to the USD 94,000 total in the application. The SCF application separately describes an award-disbursement schedule of 10% on approval, then 20%, 30%, and 40% at tranche completion, with professional user testing at mainnet launch. Those payout percentages must not be confused with the delivery-cost allocation in this file.
-
-> **Consistency correction to apply to the SCF cells before submission:** the current application wording combines unconditional allowance equality with one shared allowance expiry, independently expiring orders, and a cancellation that succeeds when `try_approve` rejects. These cannot all imply continuous equality. This file and `ARCHITECTURE.md` use the technically consistent rule: equality at successful maker-authorized synchronization points; permanent unfillability plus finite, expiring stale capacity after a rejected reduction or an earlier individual order expiry; reconciliation on the next successful maker-authorized computed `approve`, or expiry of the shared allowance. Update the corresponding wording in `Application Build!E14:E16` so the application and repository do not diverge.
-
-SCF funding is not allocated to marketing or promotion. The distribution activities below publish deliverables and notify relevant technical or existing-user communities; they are not budget line items.
-
-## Cross-document consistency gates
-
-These gates apply before the relevant contract freeze:
-
-- [ ] Keep all component names, contract methods, trust assumptions, and the 13 numbered invariants aligned with `ARCHITECTURE.md`.
-- [ ] Resolve allowance equality, independent order expiries, and cancellation liveness exactly as specified in [Architecture section 2.2](./ARCHITECTURE.md#22-cancellation-liveness-and-allowance-reconciliation): separate asset/share aggregates; equality at synchronization points; permanently unfillable cancelled/expired orders; later successful maker-authorized computed `approve` or shared-allowance expiry.
-- [ ] Prove the exact nested Soroban authorization tree for settlement, router, adapter, venue, vault, and share-token calls without permissive authorization mocks.
-- [ ] Bind settlement to one immutable router address; publish and independently reproduce the direct-WASM hashes for every Seltra-owned contract.
-- [ ] Verify `min_out` and every maker/keeper/yield payout from exact final-recipient balance deltas, not only the settlement's route-output delta.
-- [ ] Separate the pause guardian from the registry governor and test every role boundary and 72-hour activation path.
-- [ ] Query live Stellar network settings for resource tests. The October 2026 values in the design are a snapshot, not hard-coded protocol constants.
-- [ ] Pin the exact Aquarius, Soroswap, DeFindex, and Blend deployments/interfaces used by the tests.
-- [ ] Preserve the architecture section numbering referenced by the application.
-
-
-
-## Tranche 1: Settlement core, both venues, and threat model
-
-**Status:** Planned  
-**Period:** 2026-12-15 to 2027-01-29  
-**Budget:** USD 31,200
-
-**Distribution:** Publish the repository and threat model in Soroban developer channels. Inform existing Seltra users on Avalanche through the application and the project's X account.
-
-### 1.1 `SeltraSettlement`: on-chain orders and spending path
-
-**Due:** 2027-01-03  
-**Budget:** USD 13,200  
-**Architecture:** [sections 2-4 and 8](./ARCHITECTURE.md#2-design-constraints)
-
-#### Scope
-
-Implement the immutable Rust/Soroban settlement contract with:
-
-- batch placement authorized by an ordinary Stellar wallet transaction;
-- `(maker, nonce)` order IDs and bounded on-chain order storage;
-- per-order cancellation that cannot be paused;
-- whole-order DEX fills and direct P2P crosses;
-- explicit expiry and guardian pause behavior;
-- a contract-managed SEP-41 allowance based on the maker's open orders;
-- separate aggregation of default-mode `amount_in` and yield-mode `shares` by the actual token contract for which settlement is spender;
-- a per-order surplus split, defaulting to 70% keeper and 30% maker;
-- no upgrade entrypoint; and
-- no protocol fee or fee parameter.
-
-
-
-#### Completion evidence
-
-- [ ] A public repository contains a reproducible contract build.
-- [ ] CI inspection demonstrates that the compiled settlement WASM has no exposed or reachable upgrade path.
-- [ ] At least 55 unit tests cover architecture invariants 1-11, with every invariant mapped to a named test.
-- [ ] Settlement line coverage is greater than 90%.
-- [ ] At least 100,000 randomized sequences of placements, cancellations, fills, and expiries complete with zero invariant failures.
-- [ ] Every successful maker-authorized settlement-computed `approve` sets the relevant default-asset or yield-share allowance to its live-order aggregate; before the next individual expiry, fills reduce allowance and aggregate by the same amount.
-- [ ] If a cancellation-time allowance reduction is rejected, cancellation still succeeds, the deleted order cannot fill, `allowance_sync_failed` exposes the retained finite allowance and expiry, and equality is restored only by a later successful maker-authorized update or by shared-allowance expiry; earlier individual expiry is tested as a separate finite stale-capacity case.
-- [ ] Validation rejects zero/negative or out-of-range amounts, identical token pairs, `surplus_bps` outside `0..=10_000`, past/overlong expiries, unchecked conversion, and arithmetic overflow.
-- [ ] DEX and P2P tests coalesce payouts by `(token, recipient)`, snapshot every unique final recipient, and prove exact aggregate deltas while each maker entitlement remains at least `min_out`; self-fill/address-alias cases pass and fee-on-transfer payouts revert atomically.
-- [ ] All negative tests pass: replay of filled/cancelled/expired orders, cancellation by a non-maker, a fill one base unit below `min_out`, double fill, fill after balance or allowance removal, and one test for each P2P cross rule.
-- [ ] Placements signed with a plain account key succeed on testnet.
-- [ ] At least 10 different makers place orders in the same ledger, with transaction hashes published.
-- [ ] Resource reports cover a single cross, a cross batch at `MAX_CROSSES`, the deepest DEX route, and a 20-order ladder.
-- [ ] Every measured boundary operation consumes no more than 50% of every live per-transaction resource limit.
-- [ ] Placement fee and rent are published for a seven-day order and a maximum-duration order using then-current network settings.
-
-
-
-#### Exit gate
-
-The settlement interface, storage model, authorization tree, and invariants are frozen for independent review. Any unresolved ambiguity in allowance reconciliation or route authorization blocks the freeze.
-
-### 1.2 `SeltraRouter`, Adapter Registry, Aquarius adapter, and Soroswap adapter
-
-**Due:** 2027-01-15  
-**Budget:** USD 11,600  
-**Architecture:** [section 3](./ARCHITECTURE.md#3-contracts-and-core-components)
-
-#### Scope
-
-Implement:
-
-- a router with read-only `quote` and state-changing `route` operations;
-- complete route validation before the first token movement;
-- a registry with a separate authenticated governor, exact proposal payloads, 72-hour activation delay, permissionless activation, and per-integration guardian pause;
-- an Aquarius adapter wrapping `swap_chained`; and
-- a Soroswap adapter wrapping `swap_exact_tokens_for_tokens`.
-
-The immutable settlement binds one immutable router address. The router never takes custody and has no standing approval, admin privilege, or durable token allowance. Settlement authorizes the precise deeper transfer directly to the first selected adapter; each selected adapter may receive only the exact hop input and only within one atomic invocation. All input/output amounts are verified by balance deltas, and all nested token pulls use exact invocation-scoped authorization.
-
-#### Completion evidence
-
-- [ ] At least 10 routed Stellar testnet fills execute through Aquarius.
-- [ ] At least 10 routed Stellar testnet fills execute through Soroswap.
-- [ ] At least 20 total fill hashes are published, and every maker receives at least `min_out`.
-- [ ] A published, re-runnable script seeds one compatible test pair on both venues.
-- [ ] A route using an unknown or paused adapter reverts before any token movement in all negative tests.
-- [ ] Pausing one adapter leaves the other adapter operational.
-- [ ] Adapter activation before the 72-hour ledger-timestamp delay is impossible in the ledger-advance test.
-- [ ] Only the registry governor can propose an adapter/vault/cap record; any account can activate the unchanged payload after maturity; changing address, hash, version, asset, route constraint, or cap restarts the delay.
-- [ ] Guardian pause blocks the selected adapter immediately.
-- [ ] The malicious-adapter suite covers retained input, under-reported output, wrong-token output, and an invalid nested authorization request.
-- [ ] All malicious-adapter cases revert with maker balances unchanged.
-- [ ] In controlled normal fills, settlement/router/adapter route-token balances are zero before and after. In a separate dust-prefill test, every non-zero pre-existing balance is exactly unchanged and never consumed or swept.
-- [ ] Deployment evidence proves settlement, router, registry, and Seltra-owned adapters use the published direct WASM hashes, do not use mutable executable references, and contain no reachable upgrade path.
-- [ ] Router, registry, and adapter crates each maintain greater than 90% line coverage.
-
-
-
-#### Exit gate
-
-The exact adapter interfaces, deployed test contracts, route-depth bound, `MAX_CROSSES`, and nested authorization trees are documented and frozen with the core contracts.
-
-### 1.3 Threat model and invariant map
-
-**Due:** 2027-01-29  
-**Budget:** USD 6,400  
-**Architecture:** [sections 6-7](./ARCHITECTURE.md#6-keeper-network-deployment-and-trust-assumptions)
-
-#### Scope
-
-Publish a STRIDE threat model covering:
-
-- contract-managed allowances and cancellation-time reconciliation;
-- on-chain order storage, TTL, archival, and spam bounds;
-- maker, settlement, router, adapter, venue, token, and vault authorization;
-- compromised venues, adapters, tokens, keepers, RPC providers, APIs, frontends, and MCP clients;
-- compromised pause guardian or registry governor, including role-confusion and timelock-bypass attempts;
-- keeper griefing, racing, and surplus extraction;
-- AMM price and liquidity manipulation;
-- yield-vault loss, oracle exposure, redemption liquidity, and exposure caps;
-- classic-asset freeze and clawback behavior; and
-- frontend and build supply-chain risk.
-
-
-
-#### Completion evidence
-
-- [ ] The published threat model identifies at least 45 threats.
-- [ ] Every threat has an identifier, component, impact class, mitigation, and either a named test or an explicit residual-risk statement.
-- [ ] All 13 numbered invariants in architecture section 7 map to at least one test identifier.
-- [ ] Testnet, mainnet-launch, and post-award trust assumptions are documented separately.
-- [ ] Default mode and yield mode have separate trust and loss-surface statements.
-- [ ] One engineer outside the contract authors reviews and signs off the document with name and date.
-- [ ] The core contract commit reviewed is the exact frozen Tranche 1 commit.
-
-
-
-#### Tranche 1 budget reconciliation
-
-
-| Deliverable                              | Budget         |
-| ---------------------------------------- | -------------- |
-| 1.1 Settlement                           | USD 13,200     |
-| 1.2 Router, registry, and venue adapters | USD 11,600     |
-| 1.3 Threat model                         | USD 6,400      |
-| **Total**                                | **USD 31,200** |
-
-
-
-
-## Tranche 2: Public testnet, open keeper network, and yield mode
-
-**Status:** Planned  
-**Period:** 2027-01-30 to 2027-03-01  
-**Budget:** USD 32,400
-
-**Distribution:** Launch the public testnet application. Publish the open-source keeper image and operator documentation for prospective keeper operators. Publish the MCP server for AI-assistant users.
-
-### 2.1 Testnet deployment, open-source reference keeper, and monitoring
-
-**Due:** 2027-02-12  
-**Budget:** USD 12,600  
-**Architecture:** [sections 6-7 and 9-10](./ARCHITECTURE.md#6-keeper-network-deployment-and-trust-assumptions)
-
-#### Scope
-
-Deploy all Tranche 1 contracts to Stellar testnet with the pause guardian, registry governor, and timelock configured. Publish a one-command Docker reference keeper that:
-
-- reads events and verifies orders directly through the contract;
-- quotes Aquarius and Soroswap;
-- finds valid P2P matches;
-- simulates every fill through Stellar RPC;
-- submits through channel accounts; and
-- can operate with the Seltra Order API disabled.
-
-Run a public event indexer and monitors for keeper liveness/concentration, exact-`min_out` fills, integration activations, TTL headroom, allowance consistency, allowance-sync failures, and pause-guardian/registry-governor actions.
-
-#### Completion evidence
-
-- [ ] Testnet contract and integration addresses are published.
-- [ ] At least 100 orders fill across both execution paths and both venues.
-- [ ] At least 10 direct crosses complete, including at least two batched crosses.
-- [ ] The public indexer lists all required transaction hashes.
-- [ ] The keeper repository is public under an OSI-approved license.
-- [ ] A fresh operator following only the published documentation executes at least five testnet fills, documented as a walkthrough.
-- [ ] With the Order API disabled, the keeper discovers orders from contract events through a third-party RPC provider and executes at least 10 fills; configuration and hashes are published.
-- [ ] The team keeper runs unattended for at least seven consecutive days with greater than 99% uptime on at least three channel accounts.
-- [ ] For a documented sample of at least 20 fills with both venue quotes, the keeper selects the better eligible route.
-- [ ] Adversarial tests cover every default-mode threat classified as loss of funds or forgone surplus, with each test named by threat ID.
-- [ ] Guardian pause blocks fills and placements while cancellation and expiry continue to work, evidenced by transaction hashes.
-- [ ] At least eight monitors are live, each with documented trigger, baseline, severity, and response.
-- [ ] Across at least 10 injected events, the appropriate monitor triggers in under 60 seconds every time.
-- [ ] The indexer exposes distinct keeper addresses, largest keeper share, last-fill age, and count of fills exactly at `min_out`.
-
-
-
-### 2.2 Order pipeline: wallet flow, Order API, Order Builder, MCP server, and testnet application
-
-**Due:** 2027-02-20  
-**Budget:** USD 10,900  
-**Architecture:** [sections 4.2, 5, and 9](./ARCHITECTURE.md#42-batch-placement-split-and-ladder)
-
-#### Scope
-
-Deliver:
-
-- placement and cancellation through Stellar Wallets Kit `signTransaction`;
-- pre-signing display of network, contract addresses, trustline/issuer status, allowance, and storage rent;
-- a read-only REST and WebSocket Order API built from contract state and events;
-- an Order Builder that compiles split and ladder intent into one bounded placement batch;
-- application enforcement of the USD 10 minimum per order/slice;
-- an MCP server that quotes, reads, and prepares unsigned placement/cancellation XDR; and
-- a public Next.js testnet application with self-fill.
-
-
-
-#### Completion evidence
-
-- [ ] Freighter, Lobstr, xBull, Albedo, Hana, and a Ledger device each complete at least three placements and one cancellation through Stellar Wallets Kit.
-- [ ] Transaction hashes and a tested wallet-support matrix are published.
-- [ ] A placed order appears on the WebSocket feed in less than two seconds after ledger close across at least 50 measured placements.
-- [ ] An order becomes flagged within one ledger when maker balance or allowance falls below its input size.
-- [ ] A ladder of at least 20 orders is placed in one transaction.
-- [ ] A split of at least 10 slices is placed in one transaction.
-- [ ] At least 50% of each test batch is filled by keepers.
-- [ ] One slice is cancelled individually and the remainder is cancelled in one transaction.
-- [ ] Allowance behavior after each cancellation matches architecture section 2.2, including the rejected-update path.
-- [ ] At least 10 distinct testnet accounts use the public application to place, observe, and cancel an order.
-- [ ] At least five self-fills are documented with transaction hashes.
-- [ ] An AI assistant connected to the MCP server prepares at least three orders and one cancellation that users sign in their own wallets.
-- [ ] The MCP process holds no user or keeper signing key, verified by configuration and code review.
-- [ ] Every tested order or slice below USD 10 at the current quote is rejected before signing.
-- [ ] An OpenAPI specification is published.
-- [ ] The frontend builds reproducibly with pinned dependencies and checks network passphrase and contract addresses before signing.
-
-
-
-### 2.3 DeFindex yield adapter, opt-in
-
-**Due:** 2027-03-01  
-**Budget:** USD 8,900  
-**Architecture:** [section 3.6 and section 7](./ARCHITECTURE.md#36-yield-adapter)
-
-#### Scope
-
-Implement and pin the yield adapter against a concrete DeFindex vault deployment:
-
-- deposit during placement with shares minted to the maker;
-- bounded share allowance for settlement;
-- redemption in the same invocation as the DEX fill;
-- keeper-side simulation of the real redemption and Blend unwind path;
-- per-vault exposure cap measured in underlying-asset base units of committed order principal, with atomic increment/decrement;
-- registry acceptance only for active, single-asset, non-upgradable vault deployments;
-- a registry-pinned rounding tolerance no greater than one underlying base unit;
-- accrued yield returned entirely to the maker; and
-- application disclosure of fees, roles, risk, and a `waiting on liquidity` state.
-
-
-
-#### Completion evidence
-
-- [ ] At least 15 yield-mode testnet orders deposit into the allowlisted vault at placement and settle through an atomic redemption/fill, with hashes published.
-- [ ] At least three of those orders settle within 10 ledgers of placement.
-- [ ] In every tested fill, `min_out` holds and value redeemed above the order's principal returns to the maker, not the keeper.
-- [ ] No Seltra contract holds vault shares between invocations; share balances are checked before and after every tested fill.
-- [ ] Cancelling a yield-mode order leaves shares in the maker's account and applies the share-allowance reconciliation rules.
-- [ ] Tests use the exact allowlisted DeFindex and Blend contract versions and record their interfaces and hashes.
-- [ ] Activation evidence proves the vault instance uses the proposed direct `Wasm(hash)`, not an external executable reference, and review of that exact WASM finds no reachable executable-update path.
-- [ ] Constrained redemption liquidity makes the keeper skip submission and the application show `waiting on liquidity`.
-- [ ] A redemption shortfall greater than the active vault's maximum one-base-unit rounding tolerance reverts atomically with shares and order unchanged.
-- [ ] Returned yield increases the maker's underlying balance by the exact computed amount before the trading-surplus split.
-- [ ] A deposit above the exposure cap reverts; successful placement increments and fill/cancellation decrements the checked underlying-base-unit exposure counter by the order's `amount_in`.
-- [ ] Paused, multi-asset, or upgradable vault deployments are rejected.
-- [ ] A simulated vault-value loss causes the fill to revert with the maker's shares unchanged.
-- [ ] Architecture invariants 12 and 13 map to named tests.
-- [ ] Yield-adapter line coverage is greater than 90%.
-
-
-
-#### Exit gate
-
-The yield adapter and its pinned integration contracts are frozen for independent review on the exact Tranche 2 commit.
-
-#### Tranche 2 budget reconciliation
-
-
-| Deliverable                               | Budget         |
-| ----------------------------------------- | -------------- |
-| 2.1 Testnet, keeper, and monitoring       | USD 12,600     |
-| 2.2 Wallet/order pipeline and application | USD 10,900     |
-| 2.3 Yield adapter                         | USD 8,900      |
-| **Total**                                 | **USD 32,400** |
-
-
-
-
-## Tranche 3: Mainnet and checkpoint-by-checkpoint verification
-
-**Status:** Planned  
-**Period:** 2027-03-02 to 2027-04-13  
-**Budget:** USD 30,400
-
-**Distribution:** Launch the production application. Submit listing/integration requests to the wallet applications and protocols integrated in Tranche 2, including Aquarius, Soroswap, and DeFindex. Name two outside keeper operators and publish their keeper addresses at launch.
-
-### 3.1 Hardened contracts and mainnet deployment
-
-**Due:** 2027-03-24  
-**Budget:** USD 12,400  
-**Architecture:** [sections 3, 6-7, and 10](./ARCHITECTURE.md#3-contracts-and-core-components)
-
-#### Scope
-
-Remediate findings from the independent security review obtained through Stellar's security-review program for SCF-funded protocols or an equivalent independent firm. The review itself is not funded by this award.
-
-The review targets:
-
-- the core contract commit frozen at the end of Tranche 1; and
-- the yield-adapter commit frozen at the end of Tranche 2.
-
-After remediation, deploy all contracts to Stellar mainnet with verified source and published addresses. Activate the two venue adapters and first DeFindex vault through the timelock, publish the exposure cap, and configure the separate pause-guardian and registry-governor multisigs.
-
-#### Completion evidence
-
-- [ ] A public hardening report maps every finding to severity, fixing commit, and covering test.
-- [ ] All critical and high findings are closed before deployment.
-- [ ] Every medium finding is closed or documented with a specific residual-risk rationale.
-- [ ] The complete unit, property/fuzz, adversarial, authorization, resource, integration, and yield fallback suites pass on hardened code.
-- [ ] Tranche 1 and Tranche 2 coverage thresholds are maintained.
-- [ ] Mainnet addresses and deployment configuration are published.
-- [ ] The production build is reproducible from the tagged source.
-- [ ] An independent party rebuilds the settlement WASM and matches the on-chain hash.
-- [ ] An independent party resolves and matches the on-chain direct-WASM hashes for the router, registry, and Seltra-owned adapters and confirms that none uses a mutable executable reference.
-- [ ] Aquarius and Soroswap adapters and the DeFindex vault activate on mainnet only after their timelocks, with transaction hashes published.
-- [ ] The per-vault exposure cap is readable on-chain.
-- [ ] The pause guardian and registry governor are separate explorer-verifiable 2-of-3 classic-account multisigs; each has three hardware-wallet signers and at least one named signer outside the team.
-
-
-
-### 3.2 Production application, wallet integration, and mainnet yield mode
-
-**Due:** 2027-04-04  
-**Budget:** USD 9,500  
-**Architecture:** [sections 5-6 and 9](./ARCHITECTURE.md#5-keeper-economics)
-
-#### Scope
-
-Release the mainnet application with:
-
-- Stellar Wallets Kit on mainnet;
-- default and yield-mode placement;
-- split and ladder creation;
-- order API, WebSocket feed, and MCP server configured for mainnet;
-- the Tranche 2 monitoring set running against mainnet; and
-- exercised incident, settlement pause, adapter/vault pause, RPC failover, and migration runbooks.
-
-
-
-#### Completion evidence
-
-- [ ] At least 25 mainnet fills complete across both execution paths and both venues.
-- [ ] The total includes at least three direct crosses and at least five yield-mode fills.
-- [ ] Orders are placed through at least four wallet applications, including Lobstr and xBull.
-- [ ] Required hashes are published by the public indexer.
-- [ ] A ladder of at least 10 orders is placed in one mainnet transaction.
-- [ ] One ladder slice is cancelled independently, and allowance behavior matches the remaining live orders and architecture section 2.2.
-- [ ] A mainnet drill pauses and unpauses fills and placements, executes a cancellation during the pause, and pauses/unpauses the vault or its registry entry, with hashes published; it also proves the guardian cannot change an allowlist or cap.
-- [ ] Operational runbooks are published after the drill.
-- [ ] At least eight documented monitors are live against mainnet.
-- [ ] The public indexer serves mainnet fills, distinct keeper addresses, largest keeper share, last-fill age, and fills exactly at `min_out`.
-
-
-
-### 3.3 Production keeper network and independent operators
-
-**Due:** 2027-04-13  
-**Budget:** USD 8,500  
-**Architecture:** [section 6](./ARCHITECTURE.md#6-keeper-network-deployment-and-trust-assumptions)
-
-#### Scope
-
-Run production keeper infrastructure with:
-
-- a self-hosted Stellar RPC node and provider fallback;
-- channel accounts and alerting;
-- an unprivileged team backstop keeper; and
-- two keepers operated by named parties outside the team from the public image.
-
-Each outside operator publishes its keeper address and discloses any related-party relationship.
-
-#### Completion evidence
-
-- [ ] Two named outside operators each execute at least 20 testnet fills from their own keeper addresses.
-- [ ] Each outside operator executes at least five mainnet fills from its own keeper address.
-- [ ] Operator statements, addresses, and transaction hashes are public.
-- [ ] During the first 10 days after mainnet deployment, the indexer reports at least three distinct keeper addresses with successful fills.
-- [ ] The largest keeper's share over the same period is reported publicly.
-- [ ] Team backstop keeper uptime is greater than 99.5% over the same period.
-- [ ] RPC failover is exercised at least once and recorded in an incident log.
-- [ ] Mainnet operator documentation is current.
-- [ ] Each outside operator reproduces the path from zero configuration to its first mainnet fill in less than one day, with confirmation linked.
-
-
-
-#### Tranche 3 budget reconciliation
-
-
-| Deliverable                          | Budget         |
-| ------------------------------------ | -------------- |
-| 3.1 Hardening and mainnet deployment | USD 12,400     |
-| 3.2 Production application and yield | USD 9,500      |
-| 3.3 Independent keeper network       | USD 8,500      |
-| **Total**                            | **USD 30,400** |
-
-
-
-
-## Final completion definition
-
-The SCF Build is complete only when all of the following are true:
-
-- [ ] All three tranche exit gates and their evidence requirements are complete.
-- [ ] The deployed settlement WASM matches the independently reproduced immutable build.
-- [ ] The architecture, threat model, contract interfaces, addresses, test mappings, and runbooks describe the deployed system rather than a planned variant.
-- [ ] Mainnet users can place, observe, cancel, self-fill, and receive third-party keeper fills without trusting Seltra with custody.
-- [ ] Aquarius and Soroswap routes, direct P2P crosses, and opt-in DeFindex yield fills are evidenced on mainnet.
-- [ ] Cancellation remains available during protocol pause.
-- [ ] No Seltra service or MCP component holds a user key.
-- [ ] At least two outside keeper operators have successfully filled mainnet orders from their own published addresses.
-- [ ] The professional user testing required at mainnet launch is complete and its actionable findings are triaged.
-- [ ] All delivery budgets reconcile to USD 94,000 and no marketing, promotion, or external audit cost is charged to the award.
+# Seltra — Milestones
+
+## Programmable order execution on Soroban — SCF Build submission (Open Track)
+
+---
+
+**Total budget:** **$94,000**
+**Timeline:** December 15, 2026 → April 13, 2027 (**4 months**)
+**Budget split:** T1 $31,200 (33 %) / T2 $32,400 (35 %) / T3 $30,400 (32 %)
+**Integrations delivered:** Aquarius and Soroswap (T1), DeFindex (T2), Stellar Wallets Kit (T2).
+
+Every component below is specified in [ARCHITECTURE.md](./ARCHITECTURE.md) (section references in each deliverable). Each tranche is self-contained and testable on its own; each completion criterion is quantitative and verifiable from public sources: the GitHub repository and its CI, Stellar testnet and mainnet explorers, and the public orderbook and indexer endpoints. No criterion depends on user acquisition, volume targets or third-party commercial agreements.
+
+
+---
+
+## Tranche 1 — Settlement core, both venues and threat model (MVP) — $31,200
+
+> Outcome: on-chain orders and the custody path exist, are proven against the invariants in ARCHITECTURE.md §7, and execute routed fills on testnet through both venue adapters. The threat model, including yield mode, is published before any public deployment.
+> Period: December 15 → January 29, 2027.
+> **Distribution channels.** Public repository and threat model shared in Soroban developer channels; existing Seltra users on Avalanche informed through the application and the project's X account.
+
+### [Deliverable 1.1] SeltraSettlement — on-chain orders and custody path
+**Description:** The single custody contract in Rust against the Soroban SDK: `place_orders` (batch placement, maker auth, order ids `(maker, nonce)` with no global counter, orders and maker books in temporary storage with TTL covering expiry, maker book per spend token bounded at 64 open orders), `cancel_orders` (per-order, batchable, never pausable), `fill` (DEX path, one order per call) and `cross` (P2P path: mirrored pairs, whole default-mode orders, per-side surplus with no price conversion, batch bounded by `MAX_CROSSES`, any invalid pair reverting the whole call), both pulling input with `transfer_from` under the contract's allowance, read-only `get_order` / `open_orders`, guardian `pause` / `unpause`. The contract computes and sets its own SEP-41 allowance on each maker's spend token to the sum of open orders with the latest expiry; the client never builds an `approve`. Output measured by `token_out` balance delta, surplus split by `surplus_bps`, keeper reward, `__constructor` initialisation, no upgrade entrypoint. Each order spends exactly `amount_in` or does not fill; partial execution is expressed as slices (ARCHITECTURE.md §2, §3, §4, §8).
+**Completion criteria:**
+- Public repository with reproducible build instructions; the built WASM is verified to expose no upgrade entrypoint (documented check in CI)
+- Both settlement paths (DEX fill through a mock adapter, P2P cross) execute in the local Soroban test environment; ≥ 55 unit tests covering invariants 1-11 of ARCHITECTURE.md §7, each mapped to at least one named test
+- Line coverage > 90 % on the settlement crate (coverage report published by CI)
+- Fuzz and property tests on conservation, allowance accounting and surplus arithmetic: ≥ 100,000 iterations over randomised sequences of placements, cancellations, fills and expiries, with randomised amounts, decimals and `surplus_bps`; after every step the allowance equals the sum of open orders (invariant 3); zero failures
+- Negative tests pass in 100 % of cases: filled, cancelled or expired order submitted again, cancellation by a non-maker, 65th open order on a spend token, fill missing `min_out` by one unit, two fills of one order, a fill after the maker emptied the balance or revoked the allowance; for `cross`, one test per validity rule of ARCHITECTURE.md §4.3 (repeated id within and across pairs, non-mirrored tokens, yield-mode side, expired side, each floor missed by one unit, batch above `MAX_CROSSES`), each leaving every order and balance unchanged
+- P2P conservation: over ≥ 100,000 fuzzed `cross` batches with randomised amounts, decimals and `surplus_bps`, maker payout plus keeper share equals the counterparty's input exactly in each token and the settlement contract's balances are unchanged after every call; zero failures
+- Placement and cancellation transactions signed with a plain account key (no authorization-entry signing) succeed in the test environment and on testnet (hashes); ≥ 10 placements by different makers applied in the same testnet ledger all succeed (no shared hot key)
+- Measured resource budget for a single P2P cross, for a `cross` call at `MAX_CROSSES`, for the deepest allowed DEX route and for a 20-order ladder placement, each at most 50 % of every per-transaction limit (`MAX_CROSSES` fixed from this measurement), and measured placement cost (fee and rent) for a seven-day and a maximum-duration order, published against live network settings
+**Estimated date:** January 3, 2027
+**Budget:** $13,200
+
+### [Deliverable 1.2] SeltraRouter + Adapter Registry + Aquarius and Soroswap adapters
+**Description:** Router with `route` / `quote`, holding no funds at rest and no authorization; registry with timelocked `propose_adapter` / `activate_adapter`, guardian `pause_adapter`, `is_active`; two venue adapters behind the common interface, wrapping the Aquarius router (`swap_chained`) and the Soroswap router (`swap_exact_tokens_for_tokens`), each pre-authorizing the venue's token pull through `authorize_as_current_contract` (ARCHITECTURE.md §3).
+**Completion criteria:**
+- ≥ 10 routed fills on Stellar testnet through each adapter (≥ 20 in total), each with a public transaction hash and the maker receiving ≥ `min_out` (explorer links published), on a test pair seeded on both venues by the published, re-runnable deployment script
+- Route through an unknown or paused adapter reverts before any token movement in 100 % of negative tests; pausing one adapter leaves fills through the other unaffected (hashes)
+- Adapter activation impossible before the 72-hour timelock elapses (test with ledger advance); guardian pause blocks an adapter immediately
+- Malicious-adapter test suite (keeps tokens, under-reports output, returns the wrong token) run against both adapters: 100 % revert, maker balances unchanged; router and adapter balances are zero after every fill
+- Router, registry and adapter crates with line coverage > 90 %
+**Estimated date:** January 15, 2027
+**Budget:** $11,600
+
+### [Deliverable 1.3] Threat model and invariant map
+**Description:** STRIDE threat model with identifiers, covering the contract-managed allowance (computation, expiry, revocation, exposure of open orders to a fill-path defect), on-chain order storage and spam bounds, placement authorization and the scope of the maker's invocation tree, venue and adapter compromise, keeper behaviour (griefing, racing, surplus extraction), the "creates orders and pulls liquidity" scenario, AMM price manipulation, programmable execution against thin AMM liquidity, yield mode (vault compromise, lending-pool oracle risk, redemption liquidity, exposure caps), storage archival, off-chain services and frontend supply chain, classic-asset issuer actions. Each threat maps to a mitigation and to a named test or to an explicit residual-risk statement; the trust-assumption table per phase is published alongside (ARCHITECTURE.md §6, §7).
+**Completion criteria:**
+- Published document in the repository with ≥ 45 identified threats, each with: identifier, affected component, impact class (loss of funds / forgone surplus / availability / operator cost), mitigation, and either a named test or a residual-risk statement
+- 100 % of the 13 invariants of ARCHITECTURE.md §7 traced to at least one test identifier (invariants 12-13 to tests delivered in Deliverable 2.3)
+- Trust-assumption table per phase (testnet, mainnet launch, post-award), with default mode and yield mode stated separately
+- Reviewed and signed off by one engineer outside the contract authors (name and date in the document)
+**Estimated date:** January 29, 2027
+**Budget:** $6,400
+
+---
+
+## Tranche 2 — Public testnet, open keeper network, yield mode — $32,400
+
+> Outcome: the protocol runs on Stellar testnet with keepers that anyone can operate from a published image and that read orders directly from the contract, users place orders, splits and ladders from any Stellar wallet through a public application, and capital behind resting orders can opt into an allowlisted DeFindex vault and still settle atomically.
+> Period: January 30 → March 1, 2027.
+> **Distribution channels.** Public testnet application; open-source keeper image and operator documentation offered to keeper operators already contacted by the team; MCP server published for AI-assistant users.
+
+### [Deliverable 2.1] Testnet deployment, open-source reference keeper and monitoring
+**Description:** Deployment of SeltraSettlement, SeltraRouter, Adapter Registry and both venue adapters to Stellar testnet with `stellar-cli`; guardian and timelock configured; storage bump job running. Reference keeper published open source as a one-command Docker image with a configuration file (pairs, size bounds, venues, minimum surplus, RPC endpoints, channel accounts) and operator documentation; it reads open orders from the contract, quotes both venues, simulates through Stellar RPC and submits through channel accounts. Indexer ingesting contract events; adversarial scenarios from the threat model run against the deployment; monitors for keeper liveness and concentration, fills executed exactly at `min_out`, adapter and vault proposals and activations, storage TTL headroom and guardian actions (ARCHITECTURE.md §6, §7, §9, §10).
+**Completion criteria:**
+- Testnet contract addresses published; ≥ 100 filled orders on testnet across both paths and both venues, including ≥ 10 P2P crosses of which ≥ 2 are batched `cross` calls, listed with transaction hashes by the public indexer
+- Reference keeper repository public under an OSI licence; a fresh operator following only the documentation runs a keeper that executes ≥ 5 testnet fills (documented walkthrough with addresses and hashes)
+- With the order API switched off, the reference keeper discovers open orders from contract events through a third-party Stellar RPC provider, verifies them against contract state and executes ≥ 10 testnet fills (hashes, configuration published)
+- Team keeper runs unattended for ≥ 7 consecutive days with uptime > 99 % (logs published) using ≥ 3 channel accounts; keeper selects the better venue per fill in a documented sample of ≥ 20 fills on the test pair seeded on both venues, with both quotes
+- Adversarial suite covering 100 % of default-mode threats classified "loss of funds" or "forgone surplus" in Deliverable 1.3 passes, each test named by threat identifier; guardian pause on testnet blocks fills and placements while `cancel_orders` and expiry still succeed (hashes)
+- ≥ 8 monitors live with documented trigger, baseline, severity and response; an injected event triggers its monitor within < 60 s in 100 % of ≥ 10 injections; public indexer endpoint exposes distinct keeper addresses, largest keeper's share of fills, last fill age and fills at exactly `min_out`
+**Estimated date:** February 12, 2027
+**Budget:** $12,600
+
+### [Deliverable 2.2] Order pipeline — placement flow for every wallet, order API, Order Builder, MCP server and testnet application
+**Description:** Order placement and cancellation through Stellar Wallets Kit (`signTransaction`, implemented by every kit wallet), with the allowance the transaction will set, the storage rent for the chosen expiry and the trustline status shown before signing; read-only order API over REST and WebSocket built from contract state and events, flagging orders whose maker balance or allowance is below `amount_in`; Order Builder compiling split (same price) and ladder (stepped prices) configurations into one `place_orders` batch, with a $10 minimum per order and per slice enforced by the application; MCP server (quote, read orders, prepare unsigned placement and cancellation transactions, no signing capability); public Next.js testnet application with expiry presets and market-based default `min_out`, fill gauge, per-slice and whole-order cancellation, and self-fill (ARCHITECTURE.md §4.2, §5, §9).
+**Completion criteria:**
+- Orders placed and cancelled on testnet from each of Freighter, Lobstr, xBull, Albedo, Hana Wallet and a Ledger device through the kit in clear-signing mode (≥ 3 placements and 1 cancellation per wallet, hashes listed); tested support matrix published for every Stellar Wallets Kit wallet
+- A placed order appears on the order API WebSocket feed within < 2 s of ledger close (measured over ≥ 50 placements); an order whose maker balance or allowance drops below `amount_in` is flagged within one ledger of the indexer observing it
+- A ladder of ≥ 20 orders and a split of ≥ 10 slices are each placed in one transaction and have ≥ 50 % of their orders filled on testnet by keepers; one slice of a partially filled ladder is cancelled alone, then the rest in one transaction, and the on-chain allowance matches the remaining open orders after each step (hashes, allowance reads)
+- Public testnet URL from which an order is placed, seen resting and cancelled from ≥ 10 distinct testnet accounts (addresses listed); self-fill executed from the application in ≥ 5 documented cases (hashes)
+- An AI assistant connected to the MCP server prepares ≥ 3 orders and 1 cancellation that the user signs in their wallet on testnet (hashes); the server holds no key (documented check)
+- An order or slice worth less than $10 at the current quote is refused by the application before signing in 100 % of tests
+- OpenAPI specification published; frontend builds reproducibly with pinned dependencies and subresource integrity, and checks the network passphrase and contract addresses before signing (documented checks in CI)
+**Estimated date:** February 20, 2027
+**Budget:** $10,900
+
+### [Deliverable 2.3] Yield adapter on DeFindex vaults (opt-in)
+**Description:** Yield adapter integrated against the DeFindex vault contract: `deposit` (called inside `place_orders`; vault `deposit` with `from` = maker, `invest = true`, shares minted to the maker's own account), `redeem` (called by SeltraSettlement inside `fill` after moving the order's shares under the contract's allowance on the share token; vault `withdraw` with the adapter as `from`), `preview_redeem` for keeper simulation, `exposure_cap`; fill input `min(redeemed, amount_in)` with accrued yield returned to the maker; registry accepting only single-asset, non-upgradable DeFindex vaults behind the timelock, pausable by the guardian; first allowlisted single-asset DeFindex vault with a Blend strategy on testnet; application flow to opt in per order with the vault's fees, roles and added risk stated at the moment of choosing it, and a "waiting on liquidity" state (ARCHITECTURE.md §3 Yield adapter, §7).
+**Completion criteria:**
+- ≥ 15 yield-mode orders on testnet whose placement transaction deposits into the allowlisted DeFindex vault, which accrue and settle through `fill` with redemption in the same invocation (hashes), including ≥ 3 filled within 10 ledgers of placement; in 100 % of them `min_out` holds and the value redeemed above `amount_in` is returned to the maker and absent from the keeper's share (balance report published)
+- No Seltra contract holds vault shares between invocations: share balances of the yield adapter and settlement contract are unchanged before and after every tested fill; cancelling a yield-mode order leaves the shares in the maker's account and lowers the share allowance (hashes)
+- Yield tests against the DeFindex vault and Blend strategy contracts in the local test environment pass in 100 % of cases: constrained Blend liquidity makes `preview_redeem` fail and the keeper skip rather than revert, with the order shown as waiting on liquidity; deposit above the exposure cap reverts; paused, multi-asset or upgradable vault rejected; vault value loss makes the fill revert with the maker's shares unchanged
+- Invariants 12 and 13 of ARCHITECTURE.md §7 covered by named tests; adapter crate coverage > 90 %
+**Estimated date:** March 1, 2027
+**Budget:** $8,900
+
+---
+
+## Tranche 3 — Mainnet, verified checkpoint by checkpoint — $30,400
+
+> Outcome: the protocol is live on Stellar mainnet with each surface verified on its own: contracts hardened against the findings of the independent review and deployed, the production application with its wallet integration and yield mode, and a keeper network in which two of the three operators are outside the team.
+> Period: March 2 → April 13, 2027.
+> **Distribution channels.** Production application; listing requests to the Stellar wallets integrated in Tranche 2 and to the venues routed (Aquarius, Soroswap, DeFindex) for their user communities; two outside keeper operators named at launch.
+
+### [Deliverable 3.1] Hardened contracts and mainnet deployment
+**Description:** Closure of the findings raised on the contracts delivered in Tranches 1-2 by the independent review obtained through Stellar's security review programme for SCF-funded protocols or an equivalent independent firm (core contracts on the commit frozen at the end of Tranche 1, the yield adapter on the commit frozen at the end of Tranche 2; the review itself is not funded by this award), then deployment of SeltraSettlement, SeltraRouter, Adapter Registry, both venue adapters and the yield adapter to Stellar mainnet with verified source and published addresses; adapters and the first DeFindex vault activated through the timelock with a published exposure cap; guardian multisig configured and published (ARCHITECTURE.md §3, §6, §7, §10).
+**Completion criteria:**
+- Public hardening report mapping every finding to its severity, the commit that fixes it and the test that covers it; 100 % of critical and high findings closed before deployment, 100 % of medium findings closed or documented with rationale
+- Full test suite, fuzz suite, adversarial suite and yield fallback suite green on the hardened code; coverage thresholds of Tranches 1-2 maintained (CI report)
+- Mainnet contract addresses published with reproducible build instructions; a third party rebuilds the WASM and matches the on-chain hash (documented procedure and one external confirmation)
+- Aquarius and Soroswap adapters and the DeFindex vault activated on mainnet through the registry timelock, exposure cap readable on-chain (hashes); guardian is a 2-of-3 multisig account verifiable on the explorer, with one signer outside the Seltra team (named)
+**Estimated date:** March 24, 2027
+**Budget:** $12,400
+
+### [Deliverable 3.2] Production application, wallet integration and yield mode on mainnet
+**Description:** Production application with Stellar Wallets Kit against mainnet, for every kit wallet, with default and yield-mode placement, splits and ladders, the order API and the MCP server pointed at mainnet; monitors from Deliverable 2.1 running against mainnet; operational runbooks (incident, pause, vault pause, migration) exercised on the live deployment (ARCHITECTURE.md §5, §6, §9).
+**Completion criteria:**
+- ≥ 25 mainnet fills across both paths and both venues, including ≥ 3 P2P crosses and ≥ 5 yield-mode fills, of orders placed through the production application from ≥ 4 different wallet applications including Lobstr and xBull (hashes listed by the public indexer)
+- A ladder of ≥ 10 orders placed from the production application in one mainnet transaction, one slice cancelled alone, the on-chain allowance matching the remaining open orders after each step (hashes, allowance reads)
+- Pause drill on mainnet: fills and placements paused and unpaused, `cancel_orders` executed during the pause, vault paused and unpaused (hashes); runbooks published in the repository
+- ≥ 8 monitors live against mainnet with documented trigger, baseline, severity and response; public indexer endpoint serving mainnet fills, distinct keeper addresses and fills at exactly `min_out`
+**Estimated date:** April 4, 2027
+**Budget:** $9,500
+
+### [Deliverable 3.3] Production keeper network and independent operators
+**Description:** Production keeper infrastructure (self-hosted Stellar RPC with provider fallback, channel accounts, alerting) operated by the team as a backstop, plus two keepers operated by parties outside the Seltra team from the published image, each operator named (any related party declared as such) and its keeper address published (ARCHITECTURE.md §6).
+**Completion criteria:**
+- ≥ 2 keepers operated by named parties outside the Seltra team each execute ≥ 20 fills on testnet and ≥ 5 fills on mainnet from their own keeper addresses (addresses and hashes published; operator statements linked)
+- Indexer metrics on mainnet over the first 10 days after deployment show ≥ 3 distinct keeper addresses with fills, with the largest keeper's share of fills reported publicly
+- Team backstop keeper uptime > 99.5 % over the same period; RPC failover exercised at least once (incident log)
+- Operator documentation updated with mainnet configuration; walkthrough from zero to first mainnet fill reproduced by each outside operator in < 1 day (their confirmations linked)
+**Estimated date:** April 13, 2027
+**Budget:** $8,500
+
+---
+
+## Summary
+
+| Tranche | Phase | Period | Deliverables | Integrations | Budget | % |
+|---|---|---|---|---|---|---|
+| T1 | Settlement core, both venues and threat model (MVP) | Dec 15 → Jan 29, 2027 | 3 | Aquarius, Soroswap | $31,200 | 33 % |
+| T2 | Public testnet, open keeper network, yield mode | Jan 30 → Mar 1, 2027 | 3 | DeFindex, Stellar Wallets Kit | $32,400 | 35 % |
+| T3 | Mainnet, verified checkpoint by checkpoint | Mar 2 → Apr 13, 2027 | 3 | All of the above on mainnet | $30,400 | 32 % |
+| **Total** | | **4 months** | **9** | **4** | **$94,000** | 100 % |
